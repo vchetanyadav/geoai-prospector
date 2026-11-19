@@ -1,0 +1,19 @@
+services:
+  # one-off: (re)build the prospectivity model into ./outputs
+  pipeline:
+    build: {context: ., args: {RUN_PIPELINE: "0"}}
+    command: python -m geoai_prospector.pipeline
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+      - ./config:/app/config
+    profiles: ["pipeline"]
+
+  # the web app (serves whatever is in ./outputs)
+  app:
+    build: {context: ., args: {RUN_PIPELINE: "0"}}
+    ports: ["8501:8501"]
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+    restart: unless-stopped

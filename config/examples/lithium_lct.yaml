@@ -1,0 +1,89 @@
+# Example: a SEPARATE model for a different mineral system.
+#
+# Copper-gold (IOCG), lithium (LCT pegmatite) and cobalt deposits form in different
+# geological settings with different indicators, so they do not share one generic
+# model. Each system gets its own config: its own pathfinder elements, its own label
+# set (deposits of THAT system only), and its own validation.
+#
+# This file is a template for an LCT-pegmatite lithium model. It only makes sense
+# with REAL data (the synthetic generator plants an IOCG system), and the region
+# should be one with known pegmatite fields, e.g. Bynoe / Finniss near Darwin
+# (MGA zone 52) rather than East Tennant.
+#
+# Run with:  python -m geoai_prospector.pipeline --config config/examples/lithium_lct.yaml --source real
+
+project:
+  name: GeoAI-Prospector (Li)
+  region: Bynoe pegmatite field, Northern Territory
+  target_system: LCT pegmatite Li-Sn-Ta
+
+grid:
+  crs: "EPSG:7852"            # GDA2020 / MGA zone 52 (Darwin region)
+  resolution: 200             # pegmatites are small; camp-scale grid
+  bounds: [670000, 8560000, 720000, 8610000]
+
+paths: {raw: data/raw, interim: data/interim, processed: data/processed, outputs: outputs_li}
+
+source: real
+
+sources:
+  synthetic: {seed: 42, n_samples: 3500, n_deposits: 30}   # unused for this system
+  real:
+    magnetics: {path: data/raw/real_li/mag_rtp.tif, url: null}
+    gravity:   {path: data/raw/real_li/grav.nc, url: null}
+    faults:    {path: data/raw/real_li/faults.gpkg, crs: "EPSG:4283"}
+    geochem:
+      path: data/raw/real_li/geochem.csv
+      x: LONGITUDE
+      y: LATITUDE
+      crs: "EPSG:4283"
+      columns:
+        # LCT pathfinders differ from IOCG: alkali metals + Sn/Ta/Be, plus K/Rb
+        # fractionation tracers. Map to your file's column names and units.
+        Li: {col: Li_ppm, unit: ppm}
+        Cs: {col: Cs_ppm, unit: ppm}
+        Rb: {col: Rb_ppm, unit: ppm}
+        Sn: {col: Sn_ppm, unit: ppm}
+        Ta: {col: Ta_ppm, unit: ppm}
+        Be: {col: Be_ppm, unit: ppm}
+        K:  {col: K_pct,  unit: pct}
+        Nb: {col: Nb_ppm, unit: ppm}
+    deposits:
+      path: data/raw/real_li/deposits.csv
+      x: LONGITUDE
+      y: LATITUDE
+      crs: "EPSG:4283"
+      commodity_col: COMMODITY
+      commodity_filter: ["Li", "Ta", "Sn"]   # labels from THIS system only
+
+etl: {resampling: bilinear, fill_max_search_px: 6}
+
+structure:
+  # Pegmatites follow granite margins and fracture sets; shorter wavelengths matter
+  deep_source: grav
+  deep_sigma: 2.0
+  shallow_source: mag
+  shallow_sigma: 1.0
+  min_lineament_px: 8
+  density_radius_m: 1000
+  cnn: {enabled: true, patch: 32, stride: 8, epochs: 25, latent_channels: 32, n_pcs: 3, seed: 0}
+
+geochem:
+  elements: [Li, Cs, Rb, Sn, Ta, Be, K, Nb]
+  pathfinders: [Li, Cs, Ta]
+  bdl_factor: 0.65
+  max_missing_frac: 0.3
+  iforest: {n_estimators: 400, contamination: auto, seed: 0}
+  lof: {n_neighbors: 35}
+  gridding: {k: 8, power: 2, max_dist_m: 2000}
+
+model:
+  label_buffer_m: 300
+  negative_exclusion_m: 1500
+  block_size_m: 5000
+  cv_buffer_m: 1000
+  n_folds: 5
+  seed: 7
+  xgb: {n_estimators: 400, max_depth: 4, learning_rate: 0.04, subsample: 0.8,
+        colsample_bytree: 0.8, min_child_weight: 2, reg_lambda: 1.0}
+  top_area_frac: 0.02

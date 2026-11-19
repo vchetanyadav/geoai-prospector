@@ -1,0 +1,11 @@
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+data/raw/
+data/interim/
+data/processed/
+outputs/
+!outputs/.gitkeep
+*.part

@@ -1,0 +1,55 @@
+# Automated refresh: every Monday, check the public data sources for changes,
+# re-run the model only if something changed, regenerate the report and maps,
+# and commit them, which redeploys the Streamlit Cloud app automatically.
+name: Scheduled prospectivity refresh
+
+on:
+  schedule:
+    - cron: "17 16 * * 0"   # 16:17 UTC Sunday = 02:47 Monday in Darwin (ACST)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run even if no upstream change"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - name: Install
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e .
+      - name: Run pipeline
+        env:
+          USE_REAL: ${{ vars.USE_REAL_DATA }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          if [ "$USE_REAL" = "true" ]; then
+            if [ "$FORCE" = "true" ]; then python -m geoai_prospector.pipeline --source real;
+            else python -m geoai_prospector.pipeline --source real --if-changed; fi
+          else
+            python -m geoai_prospector.pipeline --source synthetic
+          fi
+      - name: Job summary
+        if: always()
+        run: test -f outputs/REPORT.md && sed -n '1,40p' outputs/REPORT.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        with: {name: prospectivity-outputs, path: outputs/, retention-days: 30}
+      - name: Commit refreshed outputs
+        run: |
+          git config user.name "geoai-bot"
+          git config user.email "geoai-bot@users.noreply.github.com"
+          git add -f outputs/REPORT.md outputs/metrics.json outputs/targets.geojson outputs/web \
+                     outputs/*.png data/processed/*.nc outputs/deposits.geojson outputs/geochem_scored.geojson \
+                     outputs/prospectivity.tif outputs/targets.gpkg || true
+          git diff --cached --quiet || git commit -m "chore: scheduled prospectivity refresh $(date -u +%F)"
+          git push

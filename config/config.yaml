@@ -1,0 +1,115 @@
+# GeoAI-Prospector configuration
+# Every stage reads from here, so changing the region, grid or model only needs a config edit.
+
+project:
+  name: GeoAI-Prospector
+  region: East Tennant, Northern Territory
+  target_system: IOCG Cu-Au (Tennant Creek style, magnetite/hematite ironstone hosted)
+
+grid:
+  crs: "EPSG:7853"            # GDA2020 / MGA zone 53 (metres) - covers 132E-138E
+  resolution: 500             # metres per pixel
+  # xmin, ymin, xmax, ymax in grid CRS: 100 km x 100 km = 10,000 km2
+  bounds: [520000, 7780000, 620000, 7880000]
+
+paths:
+  raw: data/raw
+  interim: data/interim
+  processed: data/processed
+  outputs: outputs
+
+# "synthetic" runs anywhere with no downloads (CI, demos).
+# "real" uses the public datasets listed under sources.real.
+source: synthetic
+
+sources:
+  synthetic:
+    seed: 42
+    n_samples: 3500
+    n_deposits: 30
+  real:
+    magnetics:
+      # Magnetic Anomaly Map of Australia, 7th ed. (TMI RTP) - GA PID 144725.
+      # Cut your area with the NCI THREDDS NetCDF Subset Service (NCSS) or download the GeoTIFF from the GA portal.
+      path: data/raw/real/mag_rtp.tif
+      url: null
+    gravity:
+      # East Tennant gravity survey P201901 (GA Exploring for the Future), spherical cap Bouguer anomaly grid
+      path: data/raw/real/grav_scba.nc
+      url: https://thredds.nci.org.au/thredds/fileServer/iv65/Geoscience_Australia_Geophysics_Reference_Data_Collection/ground_gravity/NT/grid/P201901/P201901-grid-grv_scba-EastTennant.nc
+    geochem:
+      # NTGS DIP001 (GEMIS) or STRIKE "surface geochemistry" csv export
+      path: data/raw/real/geochem.csv
+      x: LONGITUDE
+      y: LATITUDE
+      crs: "EPSG:4283"         # GDA94 geographic (most legacy NT data)
+      # column name in the csv -> element, and the unit of that column
+      columns:
+        Cu: {col: Cu_ppm, unit: ppm}
+        Au: {col: Au_ppb, unit: ppb}
+        Fe: {col: Fe_pct, unit: pct}
+        Bi: {col: Bi_ppm, unit: ppm}
+        Co: {col: Co_ppm, unit: ppm}
+        Pb: {col: Pb_ppm, unit: ppm}
+        Zn: {col: Zn_ppm, unit: ppm}
+        As: {col: As_ppm, unit: ppm}
+        Ni: {col: Ni_ppm, unit: ppm}
+    faults:
+      # Mapped fault lines (independent of CV lineaments): NTGS 1:250k surface geology
+      # structure layer, or GA surface geology. Optional - the model runs without it.
+      path: data/raw/real/faults.gpkg
+      crs: "EPSG:4283"
+    deposits:
+      # NTGS mineral occurrence database (STRIKE) or GA OZMIN
+      path: data/raw/real/deposits.csv
+      x: LONGITUDE
+      y: LATITUDE
+      crs: "EPSG:4283"
+      commodity_col: COMMODITY
+      commodity_filter: ["Cu", "Au"]
+
+etl:
+  resampling: bilinear
+  fill_max_search_px: 6       # small survey gaps are interpolated, larger ones stay NaN
+
+structure:
+  deep_source: grav           # deep crustal faults come from gravity
+  deep_sigma: 3.0             # Canny smoothing in pixels (bigger = longer wavelength = deeper)
+  shallow_source: mag
+  shallow_sigma: 1.5
+  min_lineament_px: 12        # drop edge fragments shorter than this
+  density_radius_m: 2000
+  cnn:
+    enabled: true
+    patch: 32
+    stride: 8
+    epochs: 25
+    latent_channels: 32
+    n_pcs: 3
+    seed: 0
+
+geochem:
+  elements: [Cu, Au, Fe, Bi, Co, Pb, Zn, As, Ni]
+  pathfinders: [Cu, Au, Bi]   # the target signature
+  bdl_factor: 0.65            # censored values replaced with 0.65 x detection limit
+  max_missing_frac: 0.3
+  iforest: {n_estimators: 400, contamination: auto, seed: 0}
+  lof: {n_neighbors: 35}
+  gridding: {k: 8, power: 2, max_dist_m: 4000}
+
+model:
+  label_buffer_m: 600         # pixels this close to a known deposit are positives
+  negative_exclusion_m: 3000  # pixels between buffer and exclusion are left out of training
+  block_size_m: 10000         # spatial CV blocks
+  cv_buffer_m: 2500           # training pixels this close to a test block are dropped (leakage guard)
+  n_folds: 5
+  seed: 7
+  xgb:
+    n_estimators: 400
+    max_depth: 4
+    learning_rate: 0.04
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 2
+    reg_lambda: 1.0
+  top_area_frac: 0.02         # top 2 % of the area is turned into target polygons
